@@ -1,4 +1,4 @@
-/* Copyright (C) 2001-2015 Peter Selinger.
+/* Copyright (C) 2001-2011 Peter Selinger.
    This file is part of Potrace. It is free software and it is covered
    by the GNU General Public License. See the file COPYING for details. */
 
@@ -131,6 +131,7 @@ static void xor_to_ref(potrace_bitmap_t *bm, int x, int y, int xa) {
 
 /* a path is represented as an array of points, which are thought to
    lie on the corners of pixels (not on their centers). The path point
+
    (x,y) is the lower left corner of the pixel (x,y). Paths are
    represented by the len/pt components of a path_t object (which
    also stores other information about the path) */
@@ -196,7 +197,7 @@ static void setbbox_path(bbox_t *bbox, path_t *p) {
    cannot have length 0). Sign is required for correct interpretation
    of turnpolicies. */
 static path_t *findpath(potrace_bitmap_t *bm, int x0, int y0, int sign, int turnpolicy) {
-  int x, y, dirx, diry, len, size, area;
+  int x, y, dirx, diry, len, size, area,total_edges,vl,hl,change_path,dirx0, diry0;
   int c, d, tmp;
   point_t *pt, *pt1;
   path_t *p = NULL;
@@ -209,22 +210,22 @@ static path_t *findpath(potrace_bitmap_t *bm, int x0, int y0, int sign, int turn
   len = size = 0;
   pt = NULL;
   area = 0;
-  
-  while (1) {
+//  printf("path \n");
+    while (1) {
     /* add point to path */
     if (len>=size) {
       size += 100;
       size = (int)(1.3 * size);
       pt1 = (point_t *)realloc(pt, size * sizeof(point_t));
       if (!pt1) {
-	goto error;
+  goto error;
       }
       pt = pt1;
     }
     pt[len].x = x;
     pt[len].y = y;
     len++;
-    
+  // printf("%d %d\n",x,y);
     /* move to next point */
     x += dirx;
     y += diry;
@@ -238,22 +239,30 @@ static path_t *findpath(potrace_bitmap_t *bm, int x0, int y0, int sign, int turn
     /* determine next direction */
     c = BM_GET(bm, x + (dirx+diry-1)/2, y + (diry-dirx-1)/2);
     d = BM_GET(bm, x + (dirx-diry-1)/2, y + (diry+dirx-1)/2);
+   
+    vl=hl=0;
+    hl=((dirx==1||dirx==-1)?1:0);
+    vl=((diry==1||diry==-1)?1:0);
+    
+    dirx0=dirx;
+    diry0=diry; 
+
     
     if (c && !d) {               /* ambiguous turn */
       if (turnpolicy == POTRACE_TURNPOLICY_RIGHT
-	  || (turnpolicy == POTRACE_TURNPOLICY_BLACK && sign == '+')
-	  || (turnpolicy == POTRACE_TURNPOLICY_WHITE && sign == '-')
-	  || (turnpolicy == POTRACE_TURNPOLICY_RANDOM && detrand(x,y))
-	  || (turnpolicy == POTRACE_TURNPOLICY_MAJORITY && majority(bm, x, y))
-	  || (turnpolicy == POTRACE_TURNPOLICY_MINORITY && !majority(bm, x, y))) {
-	tmp = dirx;              /* right turn */
-	dirx = diry;
-	diry = -tmp;
-      } else {
-	tmp = dirx;              /* left turn */
-	dirx = -diry;
-	diry = tmp;
-      }
+    || (turnpolicy == POTRACE_TURNPOLICY_BLACK && sign == '+')
+    || (turnpolicy == POTRACE_TURNPOLICY_WHITE && sign == '-')
+    || (turnpolicy == POTRACE_TURNPOLICY_RANDOM && detrand(x,y))
+    || (turnpolicy == POTRACE_TURNPOLICY_MAJORITY && majority(bm, x, y))
+    || (turnpolicy == POTRACE_TURNPOLICY_MINORITY  && majority(bm, x, y))) {  
+    tmp = dirx;              /* right turn */
+    dirx = diry;
+    diry = -tmp;
+        } else {
+    tmp = dirx;              /* left turn */
+    dirx = -diry;
+    diry = tmp;
+        }
     } else if (c) {              /* right turn */
       tmp = dirx;
       dirx = diry;
@@ -263,7 +272,9 @@ static path_t *findpath(potrace_bitmap_t *bm, int x0, int y0, int sign, int turn
       dirx = -diry;
       diry = tmp;
     }
+    
   } /* while this path */
+
 
   /* allocate new path object */
   p = path_new();
@@ -275,7 +286,12 @@ static path_t *findpath(potrace_bitmap_t *bm, int x0, int y0, int sign, int turn
   p->priv->len = len;
   p->area = area;
   p->sign = sign;
-
+  /* 
+   Changes Added
+   printf("Area %d\n", area);  
+   printf("len %d\n", len);
+   printf("signi %d\n", sign);
+  */  
   return p;
  
  error:
@@ -347,15 +363,15 @@ static void pathlist_to_tree(path_t *plist, potrace_bitmap_t *bm) {
     hook_out=&head->next;
     list_forall_unlink(p, cur) {
       if (p->priv->pt[0].y <= bbox.y0) {
-	list_insert_beforehook(p, hook_out);
-	/* append the remainder of the list to hook_out */
-	*hook_out = cur;
-	break;
+  list_insert_beforehook(p, hook_out);
+  /* append the remainder of the list to hook_out */
+  *hook_out = cur;
+  break;
       }
       if (BM_GET(bm, p->priv->pt[0].x, p->priv->pt[0].y-1)) {
-	list_insert_beforehook(p, hook_in);
+  list_insert_beforehook(p, hook_in);
       } else {
-	list_insert_beforehook(p, hook_out);
+  list_insert_beforehook(p, hook_out);
       }
     }
 
@@ -402,18 +418,228 @@ static void pathlist_to_tree(path_t *plist, potrace_bitmap_t *bm) {
       
       /* go through its children */
       for (p1=p->childlist; p1; p1=p1->sibling) {
-	/* append to linked list */
-	list_insert_beforehook(p1, plist_hook);
-	/* append its childlist to heap, if non-empty */
-	if (p1->childlist) {
-	  list_append(path_t, heap1, p1->childlist);
-	}
+  /* append to linked list */
+  list_insert_beforehook(p1, plist_hook);
+  /* append its childlist to heap, if non-empty */
+  if (p1->childlist) {
+    list_append(path_t, heap1, p1->childlist);
+  }
       }
     }
     heap = heap1;
   }
 
   return;
+}
+
+// Code Added  */
+void bhm_line(int x1,int y1,int x2,int y2, potrace_bitmap_t *bm)
+{
+ int x,y,dx,dy,dx1,dy1,px,py,xe,ye,i;
+ dx=x2-x1;
+ dy=y2-y1;
+ dx1=fabs(dx);
+ dy1=fabs(dy);
+ px=2*dy1-dx1;
+ py=2*dx1-dy1;
+ if(dy1<=dx1)
+ {
+  if(dx>=0)
+  {
+   x=x1;
+   y=y1;
+   xe=x2;
+  }
+  else
+  {
+   x=x2;
+   y=y2;
+   xe=x1;
+  }
+     BM_SET(bm, x-2, y);
+  
+   BM_SET(bm, x-1, y);
+   BM_SET(bm, x, y);
+   BM_SET(bm, x+1, y);
+   BM_SET(bm, x+2, y);
+
+  for(i=0;x<xe;i++)
+  {
+   x=x+1;
+   if(px<0)
+   {
+    px=px+2*dy1;
+   }
+   else
+   {
+    if((dx<0 && dy<0) || (dx>0 && dy>0))
+    {
+     y=y+1;
+    }
+    else
+    {
+     y=y-1;
+    }
+    px=px+2*(dy1-dx1);
+   }
+  
+BM_SET(bm, x-2, y);
+  
+   BM_SET(bm, x-1, y);
+   BM_SET(bm, x, y);
+   BM_SET(bm, x+1, y);
+   BM_SET(bm, x+2, y);
+
+  }
+ }
+ else
+ {
+  if(dy>=0)
+  {
+   x=x1;
+   y=y1;
+   ye=y2;
+  }
+  else
+  {
+   x=x2;
+   y=y2;
+   ye=y1;
+  }
+  
+  BM_SET(bm, x-2, y);
+
+   BM_SET(bm, x-1, y);
+   BM_SET(bm, x, y);
+   BM_SET(bm, x+1, y);
+   BM_SET(bm, x+2, y);
+
+  for(i=0;y<ye;i++)
+  {
+   y=y+1;
+   if(py<=0)
+   {
+    py=py+2*dx1;
+   }
+   else
+   {
+    if((dx<0 && dy<0) || (dx>0 && dy>0))
+    {
+     x=x+1;
+    }
+    else
+    {
+     x=x-1;
+    }
+    py=py+2*(dx1-dy1);
+   }
+  
+  BM_SET(bm, x-2, y);
+
+   BM_SET(bm, x-1, y);
+   BM_SET(bm, x, y);
+   BM_SET(bm, x+1, y);
+   BM_SET(bm, x+2, y);
+
+  }
+ }
+}
+/* Code Added */
+
+int find_disjoint_path(potrace_bitmap_t *bm){
+  int i,j,k;
+  int x,y,dy;
+  int w,h;
+  w = bm->w;
+  h = bm->h;
+  dy = bm->dy;
+  int *bound_right_x = (int *)malloc(sizeof(int)*h);
+  int *bound_right_y = (int *)malloc(sizeof(int)*h);
+  int *bound_left_x = (int *)malloc(sizeof(int)*h);
+  int *bound_left_y = (int *)malloc(sizeof(int)*h);
+  int start_point_x=0, start_point_y=0;
+  int end_point_x=0, end_point_y=0;
+  int start_point_left_y=0, start_point_left_x=0;
+  int end_point_left_y=0, end_point_left_x=0;
+  printf("w = %d h = %d dy=%d\n",w,h,dy); 
+
+  for(y=h-1;y>=0;y--){
+    for(x=w-1;x>=0;x--){
+          if(BM_GET(bm ,x, y)){
+            bound_right_y[y]=y;
+            bound_right_x[y]=x;
+            break;
+          }
+    }
+    if(x<=-1){
+      bound_right_y[y]=y;
+      bound_right_x[y]=0;
+    }
+  }
+
+  for(y=h-1;y>=0;y--){
+    for(x=0;x<w;x+=BM_WORDBITS){
+       if (*bm_index(bm, x, y)) {
+          while (!BM_GET(bm, x, y)) {
+            x++;
+          }
+          bound_left_x[y]=x;
+          bound_left_y[y]=y;
+          break;
+
+       }
+    }
+    if(x>=w){
+      bound_left_y[y]=y;
+      bound_left_x[y]=w-1;
+    }
+  }
+
+  for(i=h-1;i>=0;i--){
+    if(bound_right_x[i]!=0){
+      break;
+    }
+  }
+  if(i==-1)
+    i=h-1;
+  for(j=i;j>=0;j--){
+    if((bound_right_x[j] - bound_right_x[j-1])>=(w/4)){
+        start_point_x = bound_right_x[j];
+        start_point_y = j;
+        break;
+    }      
+  }
+  for(k=j;k>=0;k--){
+      if((bound_right_x[k-1]-bound_right_x[k])>=(w/4)){
+        end_point_x = bound_right_x[k-1];
+        end_point_y = k-1;
+        break;
+      }
+  }
+  for(i=h-1;i>=0;i--){
+    if(bound_left_x[i]!=w-1){
+      break;
+    }
+  }
+
+  for(j=i;j>=0;j--){
+    if((bound_left_x[j] - bound_left_x[j+1])>=w/4){
+        start_point_left_x = bound_left_x[j+1];
+        start_point_left_y = j+1;
+        break;
+    }      
+  }
+
+  for(k=j;k>=0;k--){
+      if((bound_left_x[k]-bound_left_x[k-1])>=w/4){
+        end_point_left_x = bound_left_x[k-1];
+        end_point_left_y = k-1;
+        break;
+      }
+  }
+  bhm_line(start_point_x, start_point_y, end_point_x, end_point_y, bm);
+  bhm_line(start_point_left_x, start_point_left_y, end_point_left_x, end_point_left_y, bm);
+  return 0;
 }
 
 /* find the next set pixel in a row <= y. Pixels are searched first
@@ -424,25 +650,35 @@ static void pathlist_to_tree(path_t *plist, potrace_bitmap_t *bm) {
 static int findnext(potrace_bitmap_t *bm, int *xp, int *yp) {
   int x;
   int y;
-  int x0;
-
+  int x0; 
+  int newx;
+  int newy;
+  int total_edges;
+  int x_co;
+  int y_co;
+  
   x0 = (*xp) & ~(BM_WORDBITS-1);
-
+   
   for (y=*yp; y>=0; y--) {
     for (x=x0; x<bm->w; x+=BM_WORDBITS) {
       if (*bm_index(bm, x, y)) {
-	while (!BM_GET(bm, x, y)) {
-	  x++;
-	}
-	/* found */
-	*xp = x;
-	*yp = y;
-	return 0;
+
+      while (!BM_GET(bm, x, y)) {
+        x++;
+      }
+
+  /* found */
+  
+  newx=x;
+  newy=y;
+
+  *xp = x;
+  *yp = y;
+  return 0;
       }
     }
     x0 = 0;
   }
-  /* not found */
   return 1;
 }
 
@@ -452,6 +688,8 @@ static int findnext(potrace_bitmap_t *bm, int *xp, int *yp) {
    set. */
 
 int bm_to_pathlist(const potrace_bitmap_t *bm, path_t **plistp, const potrace_param_t *param, progress_t *progress) {
+  /* Code Added */ 
+  int x_co, y_co, total_edges,count_pix;
   int x;
   int y;
   path_t *p;
@@ -468,17 +706,32 @@ int bm_to_pathlist(const potrace_bitmap_t *bm, path_t **plistp, const potrace_pa
   /* be sure the byte padding on the right is set to 0, as the fast
      pixel search below relies on it */
   bm_clearexcess(bm1);
+ 
 
   /* iterate through components */
   x = 0;
   y = bm1->h - 1;
+
+  /* Code Added */
+  for(x_co=0;x_co<bm1->w;x_co++){
+    for(y_co=0;y_co<bm1->h;y_co++){
+        if((!BM_GET(bm1, x_co-1, y_co) && !BM_GET(bm1, x_co+1, y_co)) || (!BM_GET(bm1, x_co, y_co-1) && !BM_GET(bm1, x_co, y_co+1))){
+            BM_CLR(bm1, x_co, y_co);
+        }    
+   }  
+  }
+  /* Code Added */
+
+  /* Code Added */
+  find_disjoint_path(bm1);
+  /* Code Added */
   while (findnext(bm1, &x, &y) == 0) { 
     /* calculate the sign by looking at the original */
     sign = BM_GET(bm, x, y) ? '+' : '-';
 
     /* calculate the path */
     p = findpath(bm1, x, y+1, sign, param->turnpolicy);
-    if (p==NULL) {
+    if (p==NULL){
       goto error;
     }
 
@@ -496,7 +749,9 @@ int bm_to_pathlist(const potrace_bitmap_t *bm, path_t **plistp, const potrace_pa
       progress_update(1-y/(double)bm1->h, progress);
     }
   }
-
+  //printf("checking the surrounding pixels\n");
+  
+    //   printf("count %d\n", count_pix);
   pathlist_to_tree(plist, bm1);
   bm_free(bm1);
   *plistp = plist;
